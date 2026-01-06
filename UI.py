@@ -75,13 +75,24 @@ with tabs[0]:
 with tabs[1]:
     st.title("Analyze New Bill")
     st.write("Upload a receipt or invoice image to extract itemized data.")
-    
+
     # upload UI
     with st.container():
-        uploaded_file = st.file_uploader("Drop image here", type=['jpg', 'png', 'webp'])
-        if uploaded_file is not None:
-            st.image(uploaded_file, caption="Uploaded Bill", width=300)
-          
+        uploaded_files = st.file_uploader("Drop image here", type=['jpg', 'png', 'pdf'], accept_multiple_files=True)
+        if uploaded_files is not None:
+            for uploaded_file in uploaded_files:
+                file_type = uploaded_file.type
+                if file_type.startswith('image/'):
+                    st.image(uploaded_file, caption=f"Uploaded Bill: {uploaded_file.name}", width=300)
+                elif file_type == 'application/pdf':
+                    # Display PDF using an iframe with base64 encoding
+                    base64_pdf = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
+                    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="700" height="1000" type="application/pdf"></iframe>'
+                    st.markdown(pdf_display, unsafe_allow_html=True)
+                    st.success(f"PDF file '{uploaded_file.name}' uploaded successfully!")
+                else:
+                    st.warning(f"Unsupported file type uploaded: {uploaded_file.name}")
+
         st.button("Extract Data & Analyze")
 
     st.info("**Pro Tip:** Make sure the lighting is good and the text is clearly visible.")
