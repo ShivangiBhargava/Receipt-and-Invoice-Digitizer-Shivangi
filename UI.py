@@ -1,3 +1,4 @@
+#writefile app.py - https://clustered-debilitative-yuri.ngrok-free.dev/ (Live Demo Link)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -18,6 +19,10 @@ pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
 st.set_page_config(page_title="Receipt and Invoice Digitizer", layout="wide", initial_sidebar_state="collapsed")
 
 # --- CSS Styling ---
+#Page configuration
+st.set_page_config(page_title="Bill Analyzer", layout="wide", initial_sidebar_state="collapsed")
+
+
 st.markdown("""
     <style>
     .main { background-color: #f8f9fc; }
@@ -57,12 +62,26 @@ with tabs[0]:
     st.title("Financial Overview")
     st.caption("Detailed breakdown of your tracked spending and categories.")
 
+
+col_logo, col_nav = st.columns([1, 2])
+with col_logo:
+    st.subheader(" Bill Analyzer")
+    
+with col_nav:
+    tabs = st.tabs([" Dashboard", " Analyze Bill", " History"])
+
+# TAB 1: DASHBOARD
+with tabs[0]:
+    st.title("Financial Overview")
+    st.caption("Detailed breakdown of your tracked spending and categories.")
+    
     m1, m2, m3 = st.columns(3)
     m1.metric("Total Tracked Spending", "$1289.48", "Across 4 bills")
     m2.metric("Average Bill Value", "$322.37", "Last updated just now")
     m3.metric("Top Category", "Shopping", delta_color="off")
     style_metric_cards(border_left_color="#5d51e5")
 
+    
     c1, c2 = st.columns(2)
     with c1:
         st.write("### Spending by Category")
@@ -103,6 +122,10 @@ def perform_ocr(image_array):
 
 
 # --- TAB 2: ANALYZE BILL ---
+        hist_data = pd.DataFrame({'Date': ['12/29', '12/29', '12/29', '12/29'], 'Amount': [50, 80, 1000, 250]})
+        st.bar_chart(hist_data, x="Date", y="Amount", color="#5d51e5")
+
+# TAB 2: ANALYZE BILL
 with tabs[1]:
     st.title("Analyze New Bill")
     st.write("Upload a receipt or invoice image to extract itemized data.")
@@ -217,6 +240,28 @@ with tabs[1]:
     st.info("**Pro Tip:** Make sure the lighting is good and the text is clearly visible.")
 
 # --- TAB 3: HISTORY ---
+    # upload UI
+    with st.container():
+        uploaded_files = st.file_uploader("Drop image here", type=['jpg', 'png', 'pdf'], accept_multiple_files=True)
+        if uploaded_files is not None:
+            for uploaded_file in uploaded_files:
+                file_type = uploaded_file.type
+                if file_type.startswith('image/'):
+                    st.image(uploaded_file, caption=f"Uploaded Bill: {uploaded_file.name}", width=300)
+                elif file_type == 'application/pdf':
+                    # Display PDF using an iframe with base64 encoding
+                    base64_pdf = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
+                    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="700" height="1000" type="application/pdf"></iframe>'
+                    st.markdown(pdf_display, unsafe_allow_html=True)
+                    st.success(f"PDF file '{uploaded_file.name}' uploaded successfully!")
+                else:
+                    st.warning(f"Unsupported file type uploaded: {uploaded_file.name}")
+
+        st.button("Extract Data & Analyze")
+
+    st.info("**Pro Tip:** Make sure the lighting is good and the text is clearly visible.")
+
+# TAB 3: HISTORY
 with tabs[2]:
     h_col1, h_col2 = st.columns([1, 2])
 
@@ -242,3 +287,8 @@ with tabs[2]:
             <i>"To save money on future visits, consider opting for water instead of paid drinks..."</i>
         </div>
         """, unsafe_allow_html=True)
+            <p><strong> AI Savings Advice</strong></p>  
+            <i>"To save money on future visits, consider opting for water instead of paid drinks..."</i> 
+        </div>  
+        """, unsafe_allow_html=True)
+  
