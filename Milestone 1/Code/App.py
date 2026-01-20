@@ -12,11 +12,14 @@ import numpy as np
 from pdf2image import convert_from_bytes
 import plotly.express as px
 
+# --- Database Configuration ---
 DB_NAME = "receipts_vault.db"
 
+# --- Database Initialization and Operations ---
 def init_db():
   conn = sqlite3.connect(DB_NAME)
   c = conn.cursor()
+  # Create receipts table if it doesn't exist
   c.execute('''CREATE TABLE IF NOT EXISTS receipts
               (id INTEGER PRIMARY KEY AUTOINCREMENT,
                merchant TEXT,
@@ -33,32 +36,66 @@ def save_to_db(data):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     merchant = data.get('merchant', 'Unknown')
-    date = data.get('date', 'Unknown')
+    date_str = data.get('date', 'Unknown')
     total = data.get('total', 0.0)
     currency = data.get('currency', '')
     items = json.dumps(data.get('items', []))
 
+    formatted_date = 'Unknown'
+    if date_str != 'Unknown':
+        try:
+            # Use pandas to_datetime to handle mixed date formats robustly
+            parsed_date = pd.to_datetime(date_str, errors='coerce')
+            if pd.notna(parsed_date):
+                formatted_date = parsed_date.strftime('%Y-%m-%d')
+            # If parsing fails, formatted_date remains 'Unknown'
+        except Exception:
+            # Handle unexpected errors during date parsing, formatted_date remains 'Unknown'
+            pass
+
+    # Check for duplicate based on merchant, formatted_date, and total
+    # Only perform duplicate check if the date was successfully formatted
+    existing_receipt = None
+    if formatted_date != 'Unknown':
+        c.execute('''SELECT id FROM receipts WHERE merchant = ? AND date = ? AND total = ?''',
+                  (merchant, formatted_date, total))
+        existing_receipt = c.fetchone()
+
+    if existing_receipt:
+        conn.close()
+        return False # Indicate that it was a duplicate
+
+    # Insert new receipt record
     c.execute('''INSERT INTO receipts (merchant, date, total, currency, raw_json, timestamp)
                  VALUES (?, ?, ?, ?, ?, ?)''',
-             (merchant, date, total, currency, items, datetime.now()))
+             (merchant, formatted_date, total, currency, items, datetime.now()))
     conn.commit()
     conn.close()
+    return True # Indicate successful save
 
+# --- Image Preprocessing Function ---
 def preprocess_image(pil_image):
+    # Convert PIL Image to OpenCV format (BGR)
     img = np.array(pil_image.convert('RGB'))
-    img = img[:, :, ::-1].copy()
+    img = img[:, :, ::-1].copy() # Convert RGB to BGR
+    # Convert to grayscale
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # Apply denoising
     denoised = cv2.fastNlMeansDenoising(gray, h=10)
+    # Apply adaptive thresholding
     thresh = cv2.adaptiveThreshold(
         denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY, 11, 2
     )
     return Image.fromarray(thresh)
 
+# --- Initialize Database ---
 init_db()
 
+# --- Streamlit Page Configuration ---
 st.set_page_config(page_title="Receipt and Invoice Digitizer", layout="wide", page_icon="🧾")
 
+# --- Sidebar for Authentication and Data Management ---
 with st.sidebar:
     st.header("Authentication")
     api_key = st.text_input("Gemini API Key", type="password")
@@ -66,12 +103,14 @@ with st.sidebar:
         if os.path.exists(DB_NAME):
             os.remove(DB_NAME)
             init_db()
-            st.rerun()
+            st.rerun() # Rerun the app to reflect changes
 
+# --- Gemini API Configuration ---
 if api_key:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-2.5-flash')
 
+# --- Receipt Analysis Function using Gemini Pro Vision ---
 def analyze_receipt(image_data):
     prompt = """Extract receipt details into JSON:
     {
@@ -89,10 +128,11 @@ Return ONLY JSON."""
     clean_json = response.text.replace("```json", "").replace("```", "").strip()
     return json.loads(clean_json)
 
-# --- Main UI Logic with Tabs
+# --- Main UI Logic with Tabs ---
 st.title("🧾Receipt and Invoice Digitizer")
 tab1, tab2 = st.tabs(["Vault & Upload","Analytics Dashboard"])
 
+# --- Tab 1: Vault & Upload ---
 with tab1:
     col1, col2 = st.columns([1.5, 1], gap="large")
 
@@ -107,9 +147,10 @@ with tab1:
                 else:
                     processed_count = 0
                     for uploaded_file in uploaded_files:
+                        # Handle PDF vs Image files
                         if uploaded_file.type == "application/pdf":
                             images = convert_from_bytes(uploaded_file.read())
-                            original_image = images[0]
+                            original_image = images[0] # Process only the first page for simplicity
                         else:
                             original_image = Image.open(uploaded_file)
 
@@ -117,6 +158,7 @@ with tab1:
                         comp_col1, comp_col2 = st.columns(2)
                         with comp_col1:
                             st.image(original_image, caption="Original Image", use_container_width=True)
+                        # Preprocess image before sending to Gemini
                         processed_image = preprocess_image(original_image)
                         with comp_col2:
                             st.image(processed_image, caption="Cleaned Image", use_container_width=True)
@@ -124,16 +166,20 @@ with tab1:
                         with st.spinner(f"Analyzing {uploaded_file.name}..."):
                             try:
                                 extracted = analyze_receipt(processed_image)
-                                save_to_db(extracted)
-                                st.success(f"Stored {len(extracted.get('items', []))} items from {extracted.get('merchant', 'Unknown')} (File: {uploaded_file.name}).")
-                                processed_count += 1
+                                saved_successfully = save_to_db(extracted)
+                                if saved_successfully:
+                                    st.success(f"Stored {len(extracted.get('items', []))} items from {extracted.get('merchant', 'Unknown')} (File: {uploaded_file.name}).")
+                                    processed_count += 1
+                                else:
+                                    st.warning(f"Skipped {uploaded_file.name}: Duplicate receipt detected for {extracted.get('merchant', 'Unknown')} on {extracted.get('date', 'Unknown')} with total {extracted.get('total', 0.0)}.")
                             except Exception as e:
                                 st.error(f"Analysis failed for {uploaded_file.name}: {e}")
                     if processed_count > 0:
-                        st.rerun()
+                        st.rerun() # Rerun to update the vault display
 
     with col2:
         st.subheader("Persistent Storage")
+        # Fetch all receipts from the database
         conn = sqlite3.connect(DB_NAME)
         history_df = pd.read_sql_query("SELECT * FROM receipts ORDER BY timestamp DESC", conn)
         conn.close()
@@ -141,6 +187,7 @@ with tab1:
         if not history_df.empty:
             st.dataframe(history_df.drop(columns=['raw_json']), use_container_width=True)
             st.markdown("### Detailed Bill Items")
+            # Allow user to select a receipt to view its items
             selected_id = st.selectbox("Select ID to view items:", history_df['id'].unique())
             if selected_id:
                 row = history_df[history_df['id'] == selected_id].iloc[0]
@@ -152,25 +199,34 @@ with tab1:
         else:
             st.info("The vault is empty.")
 
+# --- Tab 2: Analytics Dashboard ---
 with tab2:
     st.subheader("📊 Spending Insights")
+    # Fetch all receipts for analytics
     conn = sqlite3.connect(DB_NAME)
     df = pd.read_sql_query("SELECT * FROM receipts", conn)
     conn.close()
 
     if not df.empty:
-        # Data Cleaning for Analytics
+        # Data Cleaning and Type Conversion for Analytics
         df['total'] = pd.to_numeric(df['total'], errors='coerce')
         df['timestamp'] = pd.to_datetime(df['timestamp'])
-        df['date'] = pd.to_datetime(df['date'], format='mixed')
+        df['date'] = pd.to_datetime(df['date'], format='mixed', errors='coerce') # Add errors='coerce' to handle unparseable dates
 
         st.markdown("### Filter Data")
         filter_col1, filter_col2, filter_col3 = st.columns(3)
 
         with filter_col1:
             # Date filter
-            min_date = df['date'].min().date() if not df['date'].empty else datetime.today().date()
-            max_date = df['date'].max().date() if not df['date'].empty else datetime.today().date()
+            # Filter out NaT values before finding min/max date
+            valid_dates_df = df.dropna(subset=['date'])
+            min_date = valid_dates_df['date'].min().date() if not valid_dates_df['date'].empty else datetime.today().date()
+            max_date = valid_dates_df['date'].max().date() if not valid_dates_df['date'].empty else datetime.today().date()
+
+            # Ensure min_date is not after max_date if valid_dates_df is empty or only has one date
+            if min_date > max_date:
+                min_date, max_date = max_date, min_date
+
             date_range = st.date_input(
                 "Filter by Date",
                 value=(min_date, max_date),
@@ -189,11 +245,13 @@ with tab2:
 
         with filter_col3:
             # Amount filter
-            min_total = df['total'].min() if not df['total'].empty else 0.0
-            max_total = df['total'].max() if not df['total'].empty else 1000.0
+            # Filter out NaN values before finding min/max total
+            valid_totals_df = df.dropna(subset=['total'])
+            min_total = valid_totals_df['total'].min() if not valid_totals_df['total'].empty else 0.0
+            max_total = valid_totals_df['total'].max() if not valid_totals_df['total'].empty else 1000.0
 
             # Prevent slider error when min_total == max_total
-            if min_total == max_total and not df['total'].empty:
+            if min_total == max_total and not valid_totals_df['total'].empty:
                 max_total += 0.01 # Add a small epsilon to make max > min
 
             amount_range = st.slider(
@@ -206,7 +264,7 @@ with tab2:
         if df.empty:
             st.info("No data matches the selected filters.")
         else:
-            # Dashboard Layout
+            # Dashboard Layout for Visualizations
             dash_col1, dash_col2 = st.columns(2)
 
             with dash_col1:
@@ -230,3 +288,5 @@ with tab2:
                 st.plotly_chart(fig_bar, use_container_width=True)
     else:
         st.info("No data available for analytics yet. Upload some receipts!")
+
+  
