@@ -97,7 +97,7 @@ def convert_df_to_csv(df):
 init_db()
 
 # Configure Streamlit page settings
-st.set_page_config(page_title="Receipt Vault", layout="wide",
+st.set_page_config(page_title="Receipt and Invoice Digitizer", layout="wide",
                    page_icon="🧾")
 
 # ---Sidebar---
@@ -164,7 +164,7 @@ def analyze_receipt(image_data):
 
 st.title("🧾 Receipt and Invoice Digitizer")
 # Create tabs for different sections of the application
-tab1, tab2, tab3 = st.tabs(["📤 Vault & Upload", "📊 Analytics Dashboard", "✅ Code Validation"])
+tab1, tab2, tab3 = st.tabs(["📤 Vault & Upload", "📊 Analytics Dashboard", "✅ Validation"])
 
 with tab1:
     # Define two columns for layout within the first tab
